@@ -10,7 +10,7 @@ This step function be started via AWS [step-functions.StartExecution](https://do
 
 ## Step Function Input
 
-The step function accepts an array of queries, which each take the following arguments:
+The step function accepts an array of queries(objects), which can have the following attributes:
 
 - ExecuteStatementParameters: Should be a json object with parameters for [redsfhit-data.ExecuteSttement](https://docs.aws.amazon.com/redshift-data/latest/APIReference/API_ExecuteStatement.html). In the case the Cloudformation template was deployed with the DefaultUser, DefaultClusterId and DefaultDb then this parameter can be simplified to be only a string.
 - InitialWaitTime: The amount of time(seconds) to wait after starting query before checking the results. This should be configured to be the minimum amount of the time a query can take to be finished. Default is 30 seconds. 
