@@ -1,0 +1,336 @@
+# MIT License
+#
+# Copyright (c) 2021 Helecloud
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  redshift-step-function-query
+
+  Creates a step function that runs Redshift queries via Redshift Data API without any idling lambdas with configurable
+  retries for error handling. Idea is based on [burtcorp/athena-runner](https://github.com/burtcorp/athena-runner) and [helecloud/athena-step-function-query](https://github.com/burtcorp/athena-runner)
+
+  In case of error, the query is ran again via [Decorrelated Jitter Algorithm](https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/)
+
+  This is good for cases when queries can potentially take more than 15 minutes(lambda max runtime limit) or they need to be retried in case of errors.
+
+Parameters:
+  StateMachineName:
+    Type: String
+    Default: query-redshift
+    Description: The name of state machine. Default is query-redshift
+
+  InitialWaitTime:
+    Type: Number
+    Default: 30
+    Description: Default InitialWaitTime, see step function input section in readme. Overridable by step function input.
+
+  BaseWaitTime:
+    Type: Number
+    Default: 15
+    Description: Default BaseWaitTime, see step function input section in readme. Overridable by step function input.
+
+  WaitMultiplier:
+    Type: Number
+    Default: 1
+    Description: Default WaitMultiplier, see step function input section in readme. Overridable by step function input.
+
+  MaxWait:
+    Type: Number
+    Default: 450
+    Description: Default MaxWait, see step function input section in readme. Overridable by step function input.
+
+  MaxRetries:
+    Type: Number
+    Default: 10
+    Description: Default MaxRetries, see step function input section in readme. Overridable by step function input.
+
+  RetryErrorMatch:
+    Type: String
+    Default: ''
+    Description: Default RetryErrorMatch, see step function input section in readme. Overridable by step function input.
+
+  AllowedClusterId:
+    Type: String
+    Default: '*'
+    Description: Provide the Id of the Redshift cluster to provide access, you can use wildcards.
+
+  AllowedUserId:
+    Type: String
+    Default: '*'
+    Description: Provide the Id of the Db user to provide access, you can use wildcards.
+
+  AllowedDbName:
+    Type: String
+    Default: '*'
+    Description: Provide the database name to provide access, you can use wildcards.
+
+  ResultsRoleAwsPrincipals:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: >
+      Provide AWS account numbers or role ARN, user ARN or assumed role sessions ARNs that would be trusted
+      to assume role to the result role that would have the ability to check the results of the query via the
+      redshift-data api. By default only the lambda service is allowed.
+
+  DefaultUser:
+    Type: String
+    Default: ''
+    Description: Default user to be passed to redshift-data.ExecuteStatement
+
+  DefaultClusterId:
+    Type: String
+    Default: ''
+    Description: Default ClusterId to be passed to redshift-data.ExecuteStatement
+
+  DefaultDb:
+    Type: String
+    Default: ''
+    Description: Default database to be passed to redshift-data.ExecuteStatement
+
+Conditions:
+  NoResultsRoleAwsPrincipals: !Equals [!Select [0, !Ref ResultsRoleAwsPrincipals], '']
+
+Globals:
+  Function:
+    MemorySize: 128
+    Handler: index.handler
+    Runtime: python3.7
+
+Resources:
+  StateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Ref StateMachineName
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref StartQueryFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref CheckQueryFunction
+      Definition:
+        Comment: "Runs the provided Redshift queries without any idling resources waiting for the query to finish."
+        StartAt: MapIterator
+        States:
+          MapIterator:
+            Type: Map
+            MaxConcurrency: 1
+            End: True
+            Iterator:
+              StartAt: IfAlreadyWithId
+              States:
+                IfAlreadyWithId:
+                  Type: Choice
+                  Choices:
+                    - Variable: $.StatementId
+                      IsPresent: true
+                      Next: CheckQuery
+                  Default: StartQuery
+                StartQuery:
+                  Type: Task
+                  Resource: !GetAtt StartQueryFunction.Arn
+                  Retry:
+                    - ErrorEquals: ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"]
+                      IntervalSeconds: 2
+                      MaxAttempts: 6
+                      BackoffRate: 2
+                    - ErrorEquals: ["States.ALL"]
+                      IntervalSeconds: 15
+                      MaxAttempts: 5
+                      BackoffRate: 1.5
+                  Next: WaitForQuery
+                WaitForQuery:
+                  Type: Wait
+                  SecondsPath: $.WaitTime
+                  Next: CheckQuery
+                CheckQuery:
+                  Type: Task
+                  Resource: !GetAtt CheckQueryFunction.Arn
+                  Retry:
+                    - ErrorEquals: ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"]
+                      IntervalSeconds: 2
+                      MaxAttempts: 6
+                      BackoffRate: 2
+                    - ErrorEquals: ["States.ALL"]
+                      IntervalSeconds: 15
+                      MaxAttempts: 5
+                      BackoffRate: 1.5
+                  Next: ProcessResult
+                ProcessResult:
+                  Type: Choice
+                  Choices:
+                    - Variable: $.Decision
+                      StringEquals: SUCCEED
+                      Next: Success
+                    - Variable: $.Decision
+                      StringEquals: FAIL
+                      Next: Fail
+                    - Variable: $.Decision
+                      StringEquals: WAIT
+                      Next: WaitForQuery
+                    - Variable: $.Decision
+                      StringEquals: WAIT
+                      Next: WaitForQuery
+                  Default: StartQuery
+                Success:
+                  Type: Succeed
+                Fail:
+                  Type: Fail
+
+  Role:  # To check the results of a query, the same role must be used, so this can be used
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: RedshiftStepFunctionQueryRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !If [NoResultsRoleAwsPrincipals, !Ref AWS::NoValue, !Ref ResultsRoleAwsPrincipals]
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: 'RedshiftAccess'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - redshift-data:ExecuteStatement
+                  - redshift-data:DescribeStatement
+                  - redshift-data:GetStatementResult
+                Resource: "*"
+              - Effect: Allow
+                Action: redshift:GetClusterCredentials
+                Resource:
+                  - !Sub "arn:aws:redshift:${AWS::Region}:${AWS::AccountId}:dbuser:${AllowedClusterId}/${AllowedUserId}"
+                  - !Sub "arn:aws:redshift:${AWS::Region}:${AWS::AccountId}:dbname:${AllowedClusterId}/${AllowedDbName}"
+
+
+  StartQueryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: 'Calls redshift-data.ExecuteStatement and returns'
+      Environment:
+        Variables:
+          INITIAL_WAIT_TIME: !Ref InitialWaitTime
+          DEFAULT_USER: !Ref DefaultUser
+          DEFAULT_CLUSTER_ID: !Ref DefaultClusterId
+          DEFAULT_DB: !Ref DefaultDb
+      InlineCode: |-
+        import boto3, os, datetime
+        def convert_dates(obj):
+          if isinstance(obj, datetime.datetime):
+            return str(obj)
+          elif isinstance(obj, dict):
+            for key in obj:
+              obj[key] = convert_dates(obj[key])
+          return obj
+
+        defaults = {
+            'DbUser': os.getenv('DEFAULT_USER'),
+            'ClusterIdentifier': os.getenv('DEFAULT_CLUSTER_ID'),
+            'Database': os.getenv('DEFAULT_DB'),
+            'WithEvent': True
+        }
+
+        def handler(event, context):
+          if type(event) is str:
+            event = { 'ExecuteStatementParameters': event }
+          if type(event['ExecuteStatementParameters']) is str:
+            event['ExecuteStatementParameters'] = {
+                'Sql': event['ExecuteStatementParameters']
+            }
+
+          event['ExecuteStatementResult'] = convert_dates(boto3.client('redshift-data').execute_statement(**{
+            **defaults,
+            **event['ExecuteStatementParameters']
+          }))
+          event['StatementId'] = event['ExecuteStatementResult']['Id']
+          event['WaitTime'] = event.get('InitialWaitTime', os.getenv('INITIAL_WAIT_TIME'))
+          return event
+      Role: !GetAtt [Role, Arn]
+
+
+  CheckQueryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: 'Calls redshift-data.DescribeStatement and decides what should be done next depending on config'
+      Environment:
+        Variables:
+          MAX_RETRIES: !Ref MaxRetries
+          MAX_WAIT: !Ref MaxWait
+          RETRY_ERROR_MATCH: !Ref RetryErrorMatch
+          BASE_WAIT_TIME: !Ref BaseWaitTime
+          WAIT_MULTIPLIER: !Ref WaitMultiplier
+      InlineCode: |-
+        import boto3, re, random, os, datetime, math
+        client = boto3.client('redshift-data')
+        default_wait_time = float(os.getenv('BASE_WAIT_TIME'))
+        default_max_wait = float(os.getenv('MAX_WAIT'))
+        def convert_dates(obj):
+          if isinstance(obj, datetime.datetime):
+            return str(obj)
+          elif isinstance(obj, dict):
+            for key in obj:
+              obj[key] = convert_dates(obj[key])
+          return obj
+
+        def handler(event, context):
+          result = client.describe_statement(Id=event['StatementId'])
+          event['Result'] = convert_dates(result)
+          state = result['Status']
+          if state == 'FINISHED':
+            event['Decision'] = 'SUCCEED'
+          elif state == 'FAILED':
+            retries = event.get('Retries', 0)
+            error_match = event.get('RetryErrorMatch', os.getenv('RETRY_ERROR_MATCH'))
+            max_retries = event.get('MaxRetries', float(os.getenv('MAX_RETRIES')))
+            if re.match(error_match, result['Error']) and retries < max_retries and \
+                event.get('ExecuteStatementParameters'):
+              event['Retries'] = retries + 1
+              max_wait = event.get('MaxWait', default_max_wait)
+              # Decorrelated Jitter from https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
+              base_wait_time = float(event.get('BaseWaitTime', default_wait_time))
+              maximum_jitter = float(event.get('FailureWaitTime', base_wait_time)) * 3
+              event['FailureWaitTime'] = event['WaitTime'] = math.ceil(min(max_wait, random.randint(base_wait_time, maximum_jitter)))
+              event['Decision'] = 'RETRY'
+            else:
+              event['Decision'] = 'FAIL'
+          elif state == 'ABORTED':
+              event['Decision'] = 'FAIL'
+          else:
+            wait_multiplier = event.get('WaitMultiplier', float(os.getenv('WAIT_MULTIPLIER')))
+            new_wait_time = event.get('WaitTime', event.get('BaseWaitTime', default_wait_time)) * wait_multiplier
+            event['WaitTime'] = math.ceil(min(new_wait_time, event.get('MaxWait', default_max_wait)))
+            event['Decision'] = 'WAIT'
+          return event
+      Role: !GetAtt [Role, Arn]
+
+Outputs:
+  StateMachine:
+    Value: !Ref StateMachine
+  ResultsRole:
+    Value: !GetAtt [Role, Arn]
