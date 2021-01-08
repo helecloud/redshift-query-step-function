@@ -7,6 +7,8 @@ This is good for cases when queries can potentially take more than 15 minutes(la
 
 This step function be started via AWS [step-functions.StartExecution](https://docs.aws.amazon.com/step-functions/latest/apireference/API_StartExecution.html) or [EventBridge Step functions targets](https://docs.aws.amazon.com/eventbridge/latest/userguide/eventbridge-targets.html), which means you can schedule queries or have them run based on events 
 
+This project is available on [Serverless Application Repository](https://console.aws.amazon.com/lambda/home#/create/app?applicationId=arn:aws:serverlessrepo:eu-west-1:708984232979:applications/redshift-step-function-query).
+
 
 ## Step Function Input
 
@@ -23,13 +25,13 @@ The step function accepts an array of queries(objects), which can have the follo
 Since the template can be configured with default user, database and cluster, to simplify you can also simply pass an array of queries text, and it will be converted to the following. The following inputs are logically identical:
 
 ```json
-["vaccum"]
+["vacuum"]
 ```
 
 ```json
 [{
   "ExecuteStatementParameters": {
-    "Sql": "vaccum"
+    "Sql": "vacuum"
   }
 }]
 ```
@@ -42,7 +44,7 @@ Note that each query in the array is executed sequentially, if one fails after m
 
 ```json
 ["copy favoritemovies from 'dynamodb://Movies'iam_role 'arn:aws:iam::0123456789012:role/MyRedshiftRole' readratio 50;", 
-"vaccum favoritemovies;"]
+"vacuum favoritemovies;"]
 ```
 
 #### Queries with no retries
@@ -51,7 +53,7 @@ Sometimes retried failed queries is not required:
 
 ```json
 [{
-  "ExecuteStatementParameters": "vaccum favoritemovies;",
+  "ExecuteStatementParameters": "vacuum favoritemovies;",
   "MaxRetries": 0
 }]
 ```
@@ -62,13 +64,13 @@ Sometimes retried failed queries is not required:
 [{
   "ExecuteStatementParameters": {
     "ClusterIdentifier": "somecluster-1",
-    "Sql": "ANALYZE;VACCUM;",
+    "Sql": "ANALYZE;VACUUM;",
     "Database": "db-1",
     "DbUser": "master"
   },
   "ExecuteStatementParameters": {
     "ClusterIdentifier": "somecluster-2",
-    "Sql": "ANALYZE;VACCUM;",
+    "Sql": "ANALYZE;VACUUM;",
     "Database": "db-2",
     "DbUser": "master"
   }
@@ -87,7 +89,6 @@ however you can also provide AWS account numbers to assume to this role by the R
 
 There also some size limitations with this API, for large results best is to use [UNLOAD](https://docs.aws.amazon.com/redshift/latest/dg/r_UNLOAD.html) SQL command to write the results to S3. 
 
-## License
 ```
 MIT License
                                                                               
@@ -110,4 +111,4 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-```
+``
