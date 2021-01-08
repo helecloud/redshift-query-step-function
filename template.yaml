@@ -32,6 +32,20 @@ Description: >
 
   This is good for cases when queries can potentially take more than 15 minutes(lambda max runtime limit) or they need to be retried in case of errors.
 
+
+Metadata:
+  AWS::ServerlessRepo::Application:
+    Name: redshift-step-function-query
+    Description: Creates a step function that runs Redshift queries via Redshift Data API without any idling lambdas with configurable retries for error handling
+    Author: Helecloud
+    SpdxLicenseId: MIT
+    LicenseUrl: LICENSE.txt
+    ReadmeUrl: README.md
+    Labels: ['redshift', 'stepfunctions', 'step-functions', 'serverless']
+    HomePageUrl: https://github.com/helecloud/redshift-step-function-query
+    SemanticVersion: 0.1.0
+    SourceCodeUrl: https://github.com/helecloud/redshift-step-function-query
+
 Parameters:
   StateMachineName:
     Type: String
