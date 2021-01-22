@@ -7,7 +7,7 @@ This is good for cases when queries can potentially take more than 15 minutes(la
 
 This step function be started via AWS [step-functions.StartExecution](https://docs.aws.amazon.com/step-functions/latest/apireference/API_StartExecution.html) or [EventBridge Step functions targets](https://docs.aws.amazon.com/eventbridge/latest/userguide/eventbridge-targets.html), which means you can schedule queries or have them run based on events 
 
-This project is available on [Serverless Application Repository](https://console.aws.amazon.com/lambda/home#/create/app?applicationId=arn:aws:serverlessrepo:eu-west-1:708984232979:applications/redshift-step-function-query).
+This project is available on [Serverless Application Repository](https://console.aws.amazon.com/lambda/home#/create/app?applicationId=arn:aws:serverlessrepo:eu-west-1:708984232979:applications/redshift-query-step-function).
 
 
 ## Step Function Input

@@ -23,7 +23,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  redshift-step-function-query
+  redshift-query-step-function
 
   Creates a step function that runs Redshift queries via Redshift Data API without any idling lambdas with configurable
   retries for error handling. Idea is based on [burtcorp/athena-runner](https://github.com/burtcorp/athena-runner) and [helecloud/athena-step-function-query](https://github.com/burtcorp/athena-runner)
@@ -35,7 +35,7 @@ Description: >
 
 Metadata:
   AWS::ServerlessRepo::Application:
-    Name: redshift-step-function-query
+    Name: redshift-query-step-function
     Description: Creates a step function that runs Redshift queries via Redshift Data API without any idling lambdas with configurable retries for error handling
     Author: Helecloud
     SpdxLicenseId: MIT
