@@ -283,7 +283,7 @@ Resources:
             **event['ExecuteStatementParameters']
           }))
           event['StatementId'] = event['ExecuteStatementResult']['Id']
-          event['WaitTime'] = event.get('InitialWaitTime', os.getenv('INITIAL_WAIT_TIME'))
+          event['WaitTime'] = int(event.get('InitialWaitTime', os.getenv('INITIAL_WAIT_TIME')))
           return event
       Role: !GetAtt [Role, Arn]
 
